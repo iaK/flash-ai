@@ -2,11 +2,13 @@
 
 namespace Tests\Unit;
 
+use App\FlashCard;
 use Tests\TestCase;
 use App\TextChunker;
 use OpenAI\Resources\Chat;
 use OpenAI\Laravel\Facades\OpenAI;
 use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Cache;
 
 class ExampleTest extends TestCase
 {
@@ -74,5 +76,51 @@ EOT;
             });
 
         dd($flashCards);
+    }
+
+    /** @test */
+    public function doooooit()
+    {
+        $basepath = base_path('tests/Chapters/mikroekonomi');
+        $files = File::allFiles($basepath);
+        $files = collect($files)
+            ->map(function ($file) {
+                return $file->getContents();
+            })
+            ->implode(PHP_EOL);
+
+        $cacheKey = sha1($files);
+
+        $flashCards = Cache::has($cacheKey) 
+            ? Cache::get($cacheKey) 
+            : $this->getBook($files);
+    }
+
+
+    public function getBook($book) {
+        $chunks = (new TextChunker(3000))->chunk($book);
+        $template = <<<EOT
+    Front: Vilken är sveriges huvudstad?
+    Back: Stockholm
+
+    Front: Vilken är sveriges näst största stad?
+    Back: Göteborg
+    EOT;
+        $cards = collect($chunks)
+            ->map(function ($chunk) use ($template) {
+                $result = OpenAI::chat()->create([
+                    'model' => 'gpt-3.5-turbo',
+                    'messages' => [
+                        ['role' => 'user', 'content' => 'Gör tio stycken "flashcards" av följande text. Ett flashcard består av relavant fråga, och ett pedagogiskt svar. Båda bör vara kortfattade och lätta att förstå. Använd Denna mall: "' . $template . '". Numrera inte svaren. Texten: "' . $chunk . '"'],
+                    ],
+                ]);
+
+                return FlashCard::fromString($result['choices'][0]['message']['content']);
+            })
+            ->flatten();
+
+        Cache::forever(sha1($book), $cards);
+
+        return $cards;
     }
 }
